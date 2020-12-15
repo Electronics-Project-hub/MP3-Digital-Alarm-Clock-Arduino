@@ -1,0 +1,777 @@
+// MP3 Alarm clock Using Arduino & DFplayer mini, this code also supports DS1307 RTC
+
+// Article link: https://www.pcbway.com/blog/Activities/MP3_Alarm_Clock_using_Arduino_and_DFplayer.html
+
+// Original Author: Blogthor from Electronics-project-hub.com
+
+#include <SoftwareSerial.h>
+#include <LiquidCrystal.h>
+#include <DS3231.h> //Download DS3231 Library Here (also supports DS1307): http://www.rinkydinkelectronics.com/library.php?id=73
+#include <Wire.h>
+#include <EEPROM.h>
+const int rs = 7, en = 6, d4 = 5, d5 = 4, d6 = 3, d7 = 2;
+LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
+SoftwareSerial DFplayer(13, 8);
+DS3231 rtc(SDA, SCL);
+# define Start_Byte 0x7E
+# define Version_Byte 0xFF
+# define Command_Length 0x06
+# define End_Byte 0xEF
+# define Acknowledge 0x00
+Time t;
+int Song_number;
+int volume = 10;
+int IsPlaying = 9;
+int hh = 0, mm = 0, ss = 0;
+int Date = 1, Month = 1, Year = 2020;
+const int setting = A0;
+const int enter = A1;
+const int inc = A2;
+const int dec = A3;
+const int ext = 10;
+bool busy = 0;
+bool back = 0;
+const char* set_month_str[] = {"Null", "January", "February", "March", "April",  "May", "June", "July", "August", "September", "October",  "November", "December"};
+const char* set_day_str[] = {"Null", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY",  "FRIDAY", "SATURDAY", "SUNDAY"};
+
+void setup ()
+{
+  Wire.begin();
+  lcd.begin(16, 2);
+  if (EEPROM.read( 0) != 150)
+  {
+    for (int i = 0; i <= 255; i++)
+    {
+      EEPROM.write(i, 0);
+    }
+    EEPROM.write(0, 150);
+  }
+  pinMode(IsPlaying, INPUT);
+  pinMode(setting, INPUT_PULLUP);
+  pinMode(enter, INPUT_PULLUP);
+  pinMode(inc, INPUT_PULLUP);
+  pinMode(dec, INPUT_PULLUP);
+  pinMode(ext, INPUT_PULLUP);
+  DFplayer.begin(9600);
+  rtc.begin();
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("     WELCOME");
+  lcd.setCursor(0, 1);
+  lcd.print("****************");
+  delay(1500);
+  lcd.clear();
+}
+
+void loop ()
+{
+  t = rtc.getTime();
+  Status();
+  play();
+  if (busy == 1)
+  {
+    lcd.clear();
+    lcd.setCursor(4, 0);
+    lcd.print(rtc.getTimeStr());
+    lcd.setCursor(4, 1);
+    lcd.print("PLAYING:");
+    lcd.print(Song_number);
+    if (digitalRead(inc) == 0 && digitalRead(dec) == 0)
+    {
+      exe_cmd(0x0E, 0, 0);
+    }
+  }
+  if (busy == 0)
+  {
+    lcd.clear();
+    lcd.setCursor(4, 0);
+    lcd.print(rtc.getTimeStr());
+    lcd.setCursor(3, 1);
+    lcd.print(rtc.getDateStr());
+  }
+  if (digitalRead(setting) == LOW)
+  {
+    lcd.clear();
+    delay(250);
+    while (true)
+    {
+      lcd.setCursor(0, 0);
+      lcd.print("  ALARM SETTING ");
+      lcd.setCursor(0, 1);
+      lcd.print(">>>>>>>><<<<<<<<");
+      if (digitalRead(enter) == LOW)
+      {
+        delay(250);
+        track_setting_menu();
+        break;
+      }
+      if (digitalRead(setting) == LOW)
+      {
+        break;
+      }
+    }
+    if (digitalRead(setting) == LOW)
+    {
+      delay(250);
+      while (true)
+      {
+        lcd.setCursor(0, 0);
+        lcd.print("  TIME SETTING  ");
+        lcd.setCursor(0, 1);
+        lcd.print(">>>>>>>><<<<<<<<");
+        if (digitalRead(enter) == LOW)
+        {
+          delay(250);
+          time_setting();
+          break;
+        }
+        if (digitalRead(setting) == LOW)
+        {
+          break;
+        }
+      }
+    }
+    if (digitalRead(setting) == LOW)
+    {
+      delay(250);
+      lcd.clear();
+      while (true)
+      {
+        lcd.setCursor(0, 0);
+        lcd.print("  DATE SETTING  ");
+        lcd.setCursor(0, 1);
+        lcd.print(">>>>>>>><<<<<<<<");
+        if (digitalRead(enter) == LOW)
+        {
+          delay(250);
+          date_setting();
+          break;
+        }
+        if (digitalRead(setting) == LOW)
+        {
+          delay(250);
+          lcd.clear();
+          break;
+        }
+      }
+    }
+  }
+  delay(50);
+}
+
+void PlaySpecSong(int song_num)
+{
+  exe_cmd(0x03, 0, song_num);
+  delay(500);
+  exe_cmd(0x06, 0, volume);
+  delay(500);
+}
+
+void Status()
+{
+  if (digitalRead(IsPlaying) == LOW)
+  {
+    busy = 1;
+  }
+  if (digitalRead(IsPlaying) == HIGH)
+  {
+    busy = 0;
+  }
+}
+
+void exe_cmd(byte CMD, byte Par1, byte Par2)
+{
+  word checksum = -(Version_Byte + Command_Length + CMD + Acknowledge + Par1 + Par2);
+  byte Command_line[10] = {Start_Byte, Version_Byte, Command_Length, CMD, Acknowledge, Par1, Par2, highByte(checksum), lowByte(checksum), End_Byte};
+  for (byte x = 0; x < 10; x++)
+  {
+    DFplayer.write(Command_line[x]);
+  }
+}
+
+void time_setting()
+{
+  delay(250);
+  hh = t.hour;
+  mm = t.min;
+A:
+  lcd.clear();
+  back = 0;
+  while (true)
+  {
+    lcd.setCursor(0, 0);
+    lcd.print("SET HOURS [HH]: ");
+    lcd.setCursor(0, 1);
+    if (hh < 10) lcd.print("0");
+    lcd.print(hh);
+    if (digitalRead(inc) == LOW)
+    {
+      hh = hh + 1;
+      if (hh >= 24) hh = 0;
+      delay(200);
+    }
+    if (digitalRead(dec) == LOW)
+    {
+      hh = hh - 1;
+      if (hh < 0) hh = 0;
+      delay(200);
+    }
+    if (digitalRead(enter) == LOW)
+    {
+      delay(200);
+      break;
+    }
+    if (digitalRead(ext) == LOW)
+    {
+      delay(200);
+      return;
+    }
+    delay(50);
+  }
+  back = 0;
+  while (true)
+  {
+    lcd.setCursor(0, 0);
+    lcd.print("SET MINUTE [MM]: ");
+    lcd.setCursor(0, 1);
+    if (mm < 10) lcd.print("0");
+    lcd.print(mm);
+    if (digitalRead(inc) == LOW)
+    {
+      mm = mm + 1;
+      if (mm >= 60) mm = 0;
+      delay(200);
+    }
+    if (digitalRead(dec) == LOW)
+    {
+      mm = mm - 1;
+      if (mm < 0) mm = 0;
+      delay(200);
+    }
+    if (digitalRead(ext) == LOW)
+    {
+      delay(200);
+      back = 1;
+      break;
+    }
+    if (digitalRead(enter) == LOW)
+    {
+      rtc.setTime(hh, mm, 0);
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("   TIME SAVED   ");
+      lcd.setCursor(0, 1);
+      lcd.print("****************");
+      delay(1500);
+      lcd.clear();
+      break;
+    }
+    delay(50);
+  }
+  if (back == 1) goto A;
+}
+
+void date_setting()
+{
+  delay(250);
+A:
+  back = 0;
+  lcd.clear();
+  int y = t.dow;
+  Date = t.date;
+  while (true)
+  {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("SET DAY: ");
+    lcd.setCursor(0, 1);
+    lcd.print(set_day_str[y]);
+    if (digitalRead(inc) == LOW)
+    {
+      y = y + 1;
+      if (y > 7) y = 1;
+      delay(200);
+    }
+    if (digitalRead(dec) == LOW)
+    {
+      y = y - 1;
+      if (y < 1) y = 7;
+      delay(200);
+    }
+    if (digitalRead(enter) == LOW)
+    {
+      delay(200);
+      break;
+    }
+    if (digitalRead(ext) == LOW)
+    {
+      delay(200);
+      return;
+    }
+    delay(50);
+  }
+B:
+  back = 0;
+  lcd.clear();
+  while (true)
+  {
+    lcd.setCursor(0, 0);
+    lcd.print("SET DATE [DD]: ");
+    lcd.setCursor(0, 1);
+    if (Date < 10) lcd.print("0");
+    lcd.print(Date);
+    if (digitalRead(inc) == LOW)
+    {
+      Date = Date + 1;
+      if (Date > 31) Date = 1;
+      delay(200);
+    }
+    if (digitalRead(dec) == LOW)
+    {
+      Date = Date - 1;
+      if (Date < 1) Date = 1;
+      delay(200);
+    }
+    if (digitalRead(enter) == LOW)
+    {
+      delay(200);
+      break;
+    }
+    if (digitalRead(ext) == LOW)
+    {
+      delay(200);
+      back = 1;
+      break;
+    }
+    delay(50);
+  }
+  if (back == 1) goto A;
+
+C:
+  back = 0;
+  for (int i = 1; i <= 12; i++)
+  {
+    if (strcmp(rtc.getMonthStr(), set_month_str[i]) == 0)
+    {
+      Month = i;
+      break;
+    }
+  }
+  while (true)
+  {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("SET MONTH: ");
+    lcd.setCursor(0, 1);
+    lcd.print(set_month_str[Month]);
+    if (digitalRead(inc) == LOW)
+    {
+      Month = Month + 1;
+      if (Month > 12) Month = 1;
+      delay(200);
+    }
+    if (digitalRead(dec) == LOW)
+    {
+      Month = Month - 1;
+      if (Month < 1) Month = 1;
+      delay(200);
+    }
+    if (digitalRead(enter) == LOW)
+    {
+      delay(200);
+      break;
+    }
+    if (digitalRead(ext) == LOW)
+    {
+      delay(200);
+      back = 1;
+      break;
+    }
+    delay(50);
+  }
+  if (back == 1) goto B;
+  back = 0;
+  lcd.clear();
+  while (true)
+  {
+    lcd.setCursor(0, 0);
+    lcd.print("SET YEAR [YY]: ");
+    lcd.setCursor(0, 1);
+    lcd.print(Year);
+    if (digitalRead(inc) == LOW)
+    {
+      Year = Year + 1;
+      if (Year > 2100) Year = 2100;
+      delay(200);
+    }
+    if (digitalRead(dec) == LOW)
+    {
+      Year = Year - 1;
+      if (Year < 2020) Year = 2020;
+      delay(200);
+    }
+    if (digitalRead(ext) == LOW)
+    {
+      delay(200);
+      back = 1;
+      break;
+    }
+    if (digitalRead(enter) == LOW)
+    {
+      rtc.setDate(Date, Month, Year);
+      if (y == 1) rtc.setDOW(MONDAY);
+      if (y == 2) rtc.setDOW(TUESDAY);
+      if (y == 3) rtc.setDOW(WEDNESDAY);
+      if (y == 4) rtc.setDOW(THURSDAY);
+      if (y == 5) rtc.setDOW(FRIDAY);
+      if (y == 6) rtc.setDOW(SATURDAY);
+      if (y == 7) rtc.setDOW(SUNDAY);
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("   DATE SAVED   ");
+      lcd.setCursor(0, 1);
+      lcd.print("****************");
+      delay(1500);
+      lcd.clear();
+      break;
+    }
+    delay(50);
+  }
+  if (back == 1) goto C;
+}
+
+void track_setting_menu()
+{
+  int track_no_add, Hrs_add, Min_add, on_off_add, track_setting_no = 1, mem_loc = 5, play_vol_add;
+  delay(300);
+  while (true)
+  {
+    track_no_add = mem_loc;
+    Hrs_add = track_no_add + 1;
+    Min_add = Hrs_add + 1;
+    on_off_add = Min_add + 1;
+    play_vol_add = on_off_add + 1;
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    if (track_setting_no < 10)
+    {
+      lcd.print("ALARM:");
+      lcd.print("0");
+      lcd.print(track_setting_no);
+    }
+    else
+    {
+      lcd.print(track_setting_no);
+    }
+    lcd.setCursor(11, 0);
+    if (EEPROM.read( Hrs_add) < 10)
+    {
+      lcd.print("0");
+      lcd.print(EEPROM.read( Hrs_add));
+    }
+    else
+    {
+      lcd.print(EEPROM.read( Hrs_add));
+    }
+    lcd.print(":");
+    if (EEPROM.read( Min_add) < 10)
+    {
+      lcd.print("0");
+      lcd.print(EEPROM.read(Min_add));
+    }
+    else
+    {
+      lcd.print(EEPROM.read(Min_add));
+    }
+    lcd.setCursor(0, 1);
+    lcd.print("MP3:");
+    lcd.print(EEPROM.read(track_no_add));
+    lcd.setCursor(13, 1);
+    if (EEPROM.read( on_off_add) == 1)
+    {
+      lcd.print("ON");
+    }
+    if (EEPROM.read( on_off_add) == 0)
+    {
+      lcd.print("OFF");
+    }
+    if (digitalRead(inc) == LOW)
+    {
+      mem_loc = mem_loc + 5;
+      track_setting_no += 1;
+      if (track_setting_no > 5)
+      {
+        track_setting_no = 1;
+        mem_loc = 5;
+      }
+      delay(200);
+    }
+    if (digitalRead(dec) == LOW)
+    {
+      mem_loc = mem_loc - 5;
+      track_setting_no -= 1;
+      if (track_setting_no < 1)
+      {
+        track_setting_no = 1;
+        mem_loc = 5;
+      }
+      delay(200);
+    }
+    if (digitalRead(enter) == LOW)
+    {
+      delay(200);
+      track_no_add = mem_loc;
+      Hrs_add = track_no_add + 1;
+      Min_add = Hrs_add + 1;
+      on_off_add = Min_add + 1;
+      play_vol_add = on_off_add + 1;
+      track_setting(track_no_add, Hrs_add, Min_add, on_off_add, play_vol_add);
+      break;
+    }
+    if (digitalRead(ext) == LOW)
+    {
+      return;
+    }
+    delay(50);
+  }
+}
+
+void track_setting(int track_no, int Hrs, int Min, int on_off, int play_vol)
+{
+  int track_no_val, Hrs_val, Min_val, on_off_val, play_vol_val, repeat_val;
+  track_no_val = EEPROM.read(track_no);
+  Hrs_val = EEPROM.read(Hrs);
+  Min_val = EEPROM.read(Min);
+  on_off_val = EEPROM.read(on_off);
+  play_vol_val = EEPROM.read(play_vol);
+  lcd.clear();
+  delay(250);
+A:
+  back = 0;
+  while (true)
+  {
+    lcd.setCursor(0, 0);
+    lcd.print("ON / OFF: ");
+    if (on_off_val == 1)
+    {
+      lcd.print("ON    ");
+    }
+    else if (on_off_val == 0)
+    {
+      lcd.print("OFF   ");
+    }
+    lcd.setCursor(0, 1);
+    lcd.print("****************");
+    if (digitalRead(inc) == LOW)
+    {
+      on_off_val = 1;
+      delay(250);
+    }
+    if (digitalRead(dec) == LOW)
+    {
+      on_off_val = 0;
+      delay(250);
+    }
+    if (digitalRead(enter) == LOW)
+    {
+      delay(250);
+      if (on_off_val == 1) break;
+      if (on_off_val == 0)
+      {
+        EEPROM.write(on_off, on_off_val);
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("    ALARM OFF   ");
+        lcd.setCursor(0, 1);
+        lcd.print("****************");
+        delay(1500);
+        return;
+      }
+    }
+    if (digitalRead(ext) == LOW)
+    {
+      delay(250);
+      return;
+    }
+  }
+B:
+  back = 0;
+  while (true)
+  {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("ENTER TRACK No: ");
+    lcd.setCursor(0, 1);
+    lcd.print(track_no_val);
+    if (digitalRead(inc) == LOW)
+    {
+      track_no_val += 1;
+      if (track_no_val > 255) track_no_val = 1;
+      delay(200);
+    }
+    if (digitalRead(dec) == LOW)
+    {
+      track_no_val -= 1;
+      if (track_no_val < 1) track_no_val = 255;
+      delay(200);
+    }
+    if (digitalRead(enter) == LOW)
+    {
+      delay(200);
+      break;
+    }
+    if (digitalRead(ext) == LOW)
+    {
+      delay(200);
+      back = 1;
+      break;
+    }
+    delay(50);
+  }
+  if (back == 1) goto A;
+C:
+  back = 0;
+  while (true)
+  {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("VOLUME: ");
+    lcd.setCursor(0, 1);
+    lcd.print(play_vol_val);
+    if (digitalRead(inc) == LOW)
+    {
+      play_vol_val = play_vol_val + 1;
+      if (play_vol_val > 30) play_vol_val = 30;
+      delay(200);
+    }
+    if (digitalRead(dec) == LOW)
+    {
+      play_vol_val = play_vol_val - 1;
+      if (play_vol_val < 1) play_vol_val = 1;
+      delay(200);
+    }
+    if (digitalRead(enter) == LOW)
+    {
+      delay(200);
+      break;
+    }
+    if (digitalRead(ext) == LOW)
+    {
+      delay(200);
+      back = 1;
+      break;
+    }
+    delay(50);
+  }
+  if (back == 1) goto B;
+D:
+  back = 0;
+  while (true)
+  {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("ENTER HOUR:     ");
+    lcd.setCursor(0, 1);
+    lcd.print(Hrs_val);
+    if (digitalRead(inc) == LOW)
+    {
+      Hrs_val += 1;
+      if (Hrs_val >= 24) Hrs_val = 0;
+      delay(200);
+    }
+    if (digitalRead(dec) == LOW)
+    {
+      Hrs_val -= 1;
+      if (Hrs_val < 0) Hrs_val = 23;
+      delay(200);
+    }
+    if (digitalRead(enter) == LOW)
+    {
+      delay(200);
+      break;
+    }
+    if (digitalRead(ext) == LOW)
+    {
+      delay(200);
+      back = 1;
+      break;
+    }
+    delay(50);
+  }
+  if (back == 1) goto C;
+E:
+  back = 0;
+  while (true)
+  {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("ENTER MINUTE:   ");
+    lcd.setCursor(0, 1);
+    lcd.print(Min_val);
+    if (digitalRead(inc) == LOW)
+    {
+      Min_val += 1;
+      if (Min_val >= 60) Min_val = 0;
+      delay(200);
+    }
+    if (digitalRead(dec) == LOW)
+    {
+      Min_val -= 1;
+      if (Min_val < 0) Min_val = 59;
+      delay(200);
+    }
+    if (digitalRead(enter) == LOW)
+    {
+      delay(200);
+      break;
+    }
+    if (digitalRead(ext) == LOW)
+    {
+      delay(200);
+      back = 1;
+      break;
+    }
+    delay(50);
+  }
+  if (back == 1) goto D;
+  EEPROM.write( track_no, track_no_val);
+  EEPROM.write( Hrs, Hrs_val);
+  EEPROM.write( Min, Min_val);
+  EEPROM.write( on_off, on_off_val);
+  EEPROM.write( play_vol, play_vol_val);
+  lcd.setCursor(0, 0);
+  lcd.print("   ALARM SAVED  ");
+  lcd.setCursor(0, 1);
+  lcd.print("****************");
+  delay(1500);
+  lcd.clear();
+}
+
+void play()
+{
+  t = rtc.getTime();
+  int Hrs = t.hour;
+  int Min = t.min;
+  int Sec = t.sec;
+  int play_track_no, play_hrs, play_min, play_on_off, mem_loc = 5, play_vol;
+  for (int i = 1; i <= 5; i++)
+  {
+    int track_no_add = mem_loc;
+    int Hrs_add = track_no_add + 1;
+    int Min_add = Hrs_add + 1;
+    int on_off_add = Min_add + 1;
+    int play_vol_add = on_off_add + 1;
+    play_track_no = EEPROM.read(track_no_add);
+    play_hrs = EEPROM.read(Hrs_add);
+    play_min = EEPROM.read(Min_add);
+    play_on_off = EEPROM.read(on_off_add);
+    play_vol = EEPROM.read(play_vol_add);
+    mem_loc = mem_loc + 5;
+    if (Hrs == play_hrs && Min == play_min && Sec == 0 && play_on_off == 1)
+    {
+      Song_number = play_track_no;
+      PlaySpecSong(play_track_no);
+      volume = play_vol;
+    }
+  }
+}
